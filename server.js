@@ -10,10 +10,6 @@ const PORT = process.env.PORT || 10000;
 const PAYLOR_BASE_URL =
     "https://api.paylorke.com/api/v1";
 
-/* ================================
-   PAYLOR ENVIRONMENT VARIABLES
-================================ */
-
 const PAYLOR_API_KEY =
     process.env.PAYLOR_API_KEY;
 
@@ -33,7 +29,18 @@ const PAYLOR_WEBHOOK_SECRET =
 
 app.use(cors());
 
-app.use(express.json());
+/*
+   Save the exact raw JSON bytes so
+   Paylor webhook HMAC verification
+   is performed correctly.
+*/
+app.use(
+    express.json({
+        verify: (req, res, buf) => {
+            req.rawBody = buf;
+        }
+    })
+);
 
 
 /* ================================
@@ -206,6 +213,7 @@ app.post("/stk-push", async (req, res) => {
 
                 message:
                     data.message ||
+                    data.error?.message ||
                     "Paylor STK Push failed",
 
                 data
@@ -217,7 +225,8 @@ app.post("/stk-push", async (req, res) => {
 
         const transactionId =
             data.transactionId ||
-            data.checkout_request_id;
+            data.checkout_request_id ||
+            data.id;
 
 
         payments.set(
@@ -293,60 +302,121 @@ app.post("/stk-push", async (req, res) => {
 
 app.post(
     "/api/paylor-callback",
-    express.raw({ type: "application/json" }),
     (req, res) => {
 
         try {
 
             const signature =
-                req.headers["x-paylor-signature"] ||
-                req.headers["x-webhook-signature"];
+                req.headers["x-webhook-signature"] ||
+                req.headers["x-paylor-signature"];
 
 
             const rawBody =
-                req.body;
+                req.rawBody;
 
 
-            if (
-                PAYLOR_WEBHOOK_SECRET &&
-                signature
-            ) {
+            if (!rawBody) {
 
-                const expected =
-                    crypto
-                        .createHmac(
-                            "sha256",
-                            PAYLOR_WEBHOOK_SECRET
-                        )
-                        .update(rawBody)
-                        .digest("hex");
+                console.log(
+                    "PAYLOR: Raw request body unavailable"
+                );
 
-
-                if (
-                    signature !== expected
-                ) {
-
-                    console.log(
-                        "PAYLOR: Invalid webhook signature"
-                    );
-
-                    return res
-                        .status(401)
-                        .json({
-                            success: false,
-                            message:
-                                "Invalid signature"
-                        });
-
-                }
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "Raw request body unavailable"
+                });
 
             }
 
 
-            const payload =
-                JSON.parse(
-                    rawBody.toString()
+            /* ================================
+               VERIFY WEBHOOK SIGNATURE
+            ================================= */
+
+            if (!PAYLOR_WEBHOOK_SECRET) {
+
+                console.error(
+                    "PAYLOR: Webhook secret is not configured"
                 );
+
+                return res.status(500).json({
+                    success: false,
+                    message:
+                        "Webhook secret is not configured"
+                });
+
+            }
+
+
+            if (!signature) {
+
+                console.log(
+                    "PAYLOR: Missing webhook signature"
+                );
+
+                return res.status(401).json({
+                    success: false,
+                    message:
+                        "Missing webhook signature"
+                });
+
+            }
+
+
+            const expected =
+                crypto
+                    .createHmac(
+                        "sha256",
+                        PAYLOR_WEBHOOK_SECRET
+                    )
+                    .update(rawBody)
+                    .digest("hex");
+
+
+            const receivedBuffer =
+                Buffer.from(
+                    String(signature),
+                    "utf8"
+                );
+
+            const expectedBuffer =
+                Buffer.from(
+                    expected,
+                    "utf8"
+                );
+
+
+            if (
+                receivedBuffer.length !==
+                expectedBuffer.length ||
+                !crypto.timingSafeEqual(
+                    receivedBuffer,
+                    expectedBuffer
+                )
+            ) {
+
+                console.log(
+                    "PAYLOR: Invalid webhook signature"
+                );
+
+                return res
+                    .status(401)
+                    .json({
+                        success: false,
+                        message:
+                            "Invalid signature"
+                    });
+
+            }
+
+
+            /* ================================
+               CALLBACK PAYLOAD
+            ================================= */
+
+            const payload =
+                req.body;
 
 
             console.log(
@@ -355,15 +425,35 @@ app.post(
             );
 
 
+            /* ================================
+               PAYMENT DATA
+            ================================= */
+
+            const transaction =
+                payload.transaction ||
+                payload;
+
+
             const transactionId =
-                payload.transactionId ||
-                payload.id;
+                transaction.id ||
+                transaction.transactionId;
 
 
             const reference =
+                transaction.reference ||
                 payload.reference ||
+                transaction.merchantReference ||
                 payload.merchantReference;
 
+
+            const status =
+                transaction.status ||
+                payload.status;
+
+
+            /* ================================
+               FIND PAYMENT
+            ================================= */
 
             const payment =
                 payments.get(
@@ -374,10 +464,14 @@ app.post(
                 );
 
 
+            /* ================================
+               UPDATE PAYMENT
+            ================================= */
+
             if (payment) {
 
                 payment.status =
-                    payload.status ||
+                    status ||
                     payment.status;
 
                 payment.callback =
@@ -386,11 +480,49 @@ app.post(
                 payment.updatedAt =
                     new Date().toISOString();
 
+            } else if (
+                transactionId ||
+                reference
+            ) {
+
+                payments.set(
+                    transactionId ||
+                    reference,
+                    {
+
+                        transactionId,
+
+                        reference,
+
+                        amount:
+                            transaction.amount,
+
+                        status:
+                            status ||
+                            "UPDATED",
+
+                        callback:
+                            payload,
+
+                        createdAt:
+                            new Date().toISOString(),
+
+                        updatedAt:
+                            new Date().toISOString()
+
+                    }
+                );
+
             }
 
 
+            /* ================================
+               RESPOND QUICKLY
+            ================================= */
+
             return res.json({
-                success: true
+                success: true,
+                received: true
             });
 
 
@@ -479,6 +611,16 @@ app.get(
                 Boolean(
                     PAYLOR_API_KEY &&
                     PAYLOR_CHANNEL_ID
+                ),
+
+            webhookConfigured:
+                Boolean(
+                    PAYLOR_WEBHOOK_SECRET
+                ),
+
+            backendConfigured:
+                Boolean(
+                    BACKEND_URL
                 )
 
         });
@@ -497,6 +639,26 @@ app.listen(
 
         console.log(
             `Server running on port ${PORT}`
+        );
+
+        console.log(
+            "Paylor API key configured:",
+            Boolean(PAYLOR_API_KEY)
+        );
+
+        console.log(
+            "Paylor channel configured:",
+            Boolean(PAYLOR_CHANNEL_ID)
+        );
+
+        console.log(
+            "Paylor webhook configured:",
+            Boolean(PAYLOR_WEBHOOK_SECRET)
+        );
+
+        console.log(
+            "Backend URL configured:",
+            Boolean(BACKEND_URL)
         );
 
     }
