@@ -7,48 +7,22 @@ require("dotenv").config();
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+/* =========================================
+   MIDDLEWARE
+========================================= */
+
 app.use(cors());
+app.use(express.json());
 
-/*
-================================
-RAW BODY FOR WEBHOOK SIGNATURE
-================================
-*/
+/* =========================================
+   PAYLOR
+========================================= */
 
-app.use(express.json({
-    verify: (req, res, buf) => {
-        req.rawBody = buf;
-    }
-}));
+const PAYLOR_BASE_URL = "https://api.paylorke.com/api/v1";
 
-/*
-================================
-ENVIRONMENT VARIABLES
-================================
-
-PAYLOR_API_KEY=your_secret_api_key
-PAYLOR_CHANNEL_ID=PAYL-XXXXXX
-PAYLOR_WEBHOOK_SECRET=your_webhook_secret
-*/
-
-const PAYLOR_API_URL =
-    "https://api.paylorke.com/api/v1";
-
-const PAYLOR_API_KEY =
-    process.env.PAYLOR_API_KEY;
-
-const PAYLOR_CHANNEL_ID =
-    process.env.PAYLOR_CHANNEL_ID;
-
-const PAYLOR_WEBHOOK_SECRET =
-    process.env.PAYLOR_WEBHOOK_SECRET;
-
-
-/*
-================================
-HOME
-================================
-*/
+/* =========================================
+   HOME
+========================================= */
 
 app.get("/", (req, res) => {
     res.json({
@@ -57,12 +31,9 @@ app.get("/", (req, res) => {
     });
 });
 
-
-/*
-================================
-PAYLOR CONFIG CHECK
-================================
-*/
+/* =========================================
+   PAYLOR CONFIG CHECK
+========================================= */
 
 app.get("/api/paylor-config", (req, res) => {
 
@@ -70,159 +41,198 @@ app.get("/api/paylor-config", (req, res) => {
         success: true,
 
         apiKeyConfigured:
-            Boolean(PAYLOR_API_KEY),
+            Boolean(process.env.PAYLOR_API_KEY),
 
         channelConfigured:
-            Boolean(PAYLOR_CHANNEL_ID),
+            Boolean(process.env.PAYLOR_CHANNEL_ID),
 
         webhookConfigured:
-            Boolean(PAYLOR_WEBHOOK_SECRET)
+            Boolean(process.env.PAYLOR_WEBHOOK_SECRET),
+
+        callbackConfigured:
+            Boolean(process.env.PAYLOR_CALLBACK_URL)
     });
 });
 
-
-/*
-================================
-FUND OPTIONS
-================================
-*/
+/* =========================================
+   FUND OPTIONS
+========================================= */
 
 const fundOptions = {
-    200: 1
+    22000: 350,
+    30000: 400,
+    40000: 550,
+    50000: 600,
+    80000: 750,
+    90000: 850,
+    100000: 900,
+    150000: 1500
 };
 
-
-/*
-================================
-APPLICATION
-================================
-*/
+/* =========================================
+   APPLICATIONS
+========================================= */
 
 app.post("/api/applications", (req, res) => {
-
-    const {
-        fullName,
-        idNumber,
-        phone,
-        county,
-        fundAmount
-    } = req.body;
-
-    if (
-        !fullName ||
-        !idNumber ||
-        !phone ||
-        !county ||
-        !fundAmount
-    ) {
-        return res.status(400).json({
-            success: false,
-            message: "All required fields must be provided."
-        });
-    }
-
-    const processingFee =
-        fundOptions[Number(fundAmount)];
-
-    if (!processingFee) {
-        return res.status(400).json({
-            success: false,
-            message: "Invalid fund amount."
-        });
-    }
-
-    const application = {
-
-        id: Date.now().toString(),
-
-        fullName,
-
-        idNumber,
-
-        phone,
-
-        county,
-
-        fundAmount: Number(fundAmount),
-
-        processingFee,
-
-        status: "pending",
-
-        createdAt:
-            new Date().toISOString()
-    };
-
-    console.log(
-        "New application received:",
-        application
-    );
-
-    res.status(201).json({
-
-        success: true,
-
-        message:
-            "Application received successfully.",
-
-        application
-    });
-});
-
-
-/*
-================================
-PHONE NUMBER FORMATTER
-================================
-*/
-
-function formatPhone(phone) {
-
-    let cleaned =
-        String(phone)
-            .replace(/\s+/g, "")
-            .replace(/-/g, "");
-
-    if (cleaned.startsWith("+254")) {
-        cleaned =
-            cleaned.substring(1);
-    }
-
-    if (cleaned.startsWith("07")) {
-        cleaned =
-            "254" + cleaned.substring(1);
-    }
-
-    if (cleaned.startsWith("01")) {
-        cleaned =
-            "254" + cleaned.substring(1);
-    }
-
-    return cleaned;
-}
-
-
-/*
-================================
-REAL STK PUSH
-================================
-*/
-
-app.post("/api/stk-push", async (req, res) => {
 
     try {
 
         const {
+            fullName,
+            idNumber,
             phone,
-            amount,
-            reference
+            county,
+            fundAmount
         } = req.body;
 
-        /*
-        ----------------------------
-        VALIDATION
-        ----------------------------
-        */
+        /* -----------------------------
+           VALIDATION
+        ----------------------------- */
+
+        if (
+            !fullName ||
+            !idNumber ||
+            !phone ||
+            !county ||
+            !fundAmount
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "All required fields must be provided."
+            });
+        }
+
+        const amount = Number(fundAmount);
+
+        const processingFee =
+            fundOptions[amount];
+
+        if (!processingFee) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid fund amount."
+            });
+        }
+
+        /* -----------------------------
+           APPLICATION ID
+        ----------------------------- */
+
+        const applicationId =
+            `NYOTA-${Date.now()}`;
+
+        const application = {
+
+            id: applicationId,
+
+            fullName,
+
+            idNumber,
+
+            phone,
+
+            county,
+
+            fundAmount: amount,
+
+            processingFee,
+
+            status: "PENDING",
+
+            paymentStatus: "UNPAID",
+
+            createdAt:
+                new Date().toISOString()
+        };
+
+        console.log(
+            "NEW NYOTA APPLICATION"
+        );
+
+        console.log(application);
+
+        return res.status(201).json({
+
+            success: true,
+
+            message:
+                "Application received successfully.",
+
+            application
+        });
+
+    } catch (error) {
+
+        console.error(
+            "APPLICATION ERROR:",
+            error
+        );
+
+        return res.status(500).json({
+
+            success: false,
+
+            message:
+                "Failed to process application."
+        });
+    }
+});
+
+/* =========================================
+   FORMAT KENYAN PHONE
+========================================= */
+
+function formatKenyanPhone(phone) {
+
+    phone = String(phone)
+        .trim()
+        .replace(/\s+/g, "");
+
+    /* +254712345678 */
+
+    if (phone.startsWith("+254")) {
+        phone = phone.substring(1);
+    }
+
+    /* 0712345678 */
+
+    if (phone.startsWith("0")) {
+        phone =
+            "254" +
+            phone.substring(1);
+    }
+
+    /* 712345678 */
+
+    if (
+        phone.length === 9 &&
+        (phone.startsWith("7") ||
+         phone.startsWith("1"))
+    ) {
+        phone = "254" + phone;
+    }
+
+    return phone;
+}
+
+/* =========================================
+   STK PUSH
+========================================= */
+
+app.post("/api/stkpush", async (req, res) => {
+
+    try {
+
+        let {
+            phone,
+            amount,
+            reference,
+            description
+        } = req.body;
+
+        /* -----------------------------
+           CHECK REQUIRED DATA
+        ----------------------------- */
 
         if (!phone || !amount) {
 
@@ -235,44 +245,19 @@ app.post("/api/stk-push", async (req, res) => {
             });
         }
 
+        /* -----------------------------
+           FORMAT PHONE
+        ----------------------------- */
 
-        /*
-        ----------------------------
-        CHECK API KEY
-        ----------------------------
-        */
+        phone =
+            formatKenyanPhone(phone);
 
-        if (!PAYLOR_API_KEY) {
-
-            return res.status(500).json({
-
-                success: false,
-
-                message:
-                    "Paylor API key is not configured."
-            });
-        }
-
-
-        /*
-        ----------------------------
-        FORMAT PHONE
-        ----------------------------
-        */
-
-        const formattedPhone =
-            formatPhone(phone);
-
-
-        /*
-        ----------------------------
-        VALIDATE KENYAN NUMBER
-        ----------------------------
-        */
+        /* -----------------------------
+           VALIDATE PHONE
+        ----------------------------- */
 
         if (
-            !/^254(7|1)\d{8}$/
-                .test(formattedPhone)
+            !/^254[17][0-9]{8}$/.test(phone)
         ) {
 
             return res.status(400).json({
@@ -284,19 +269,15 @@ app.post("/api/stk-push", async (req, res) => {
             });
         }
 
+        /* -----------------------------
+           VALIDATE AMOUNT
+        ----------------------------- */
 
-        /*
-        ----------------------------
-        VALIDATE AMOUNT
-        ----------------------------
-        */
-
-        const paymentAmount =
-            Number(amount);
+        amount = Number(amount);
 
         if (
-            !Number.isInteger(paymentAmount) ||
-            paymentAmount <= 0
+            !Number.isInteger(amount) ||
+            amount <= 0
         ) {
 
             return res.status(400).json({
@@ -308,90 +289,129 @@ app.post("/api/stk-push", async (req, res) => {
             });
         }
 
+        /* -----------------------------
+           PAYLOR API KEY
+        ----------------------------- */
 
-        /*
-        ----------------------------
-        UNIQUE REFERENCE
-        ----------------------------
-        */
+        const apiKey =
+            process.env.PAYLOR_API_KEY;
 
-        const paymentReference =
-            reference ||
-            `NYOTA-${Date.now()}`;
+        if (!apiKey) {
 
+            return res.status(500).json({
 
-        /*
-        ----------------------------
-        REQUEST BODY
-        ----------------------------
-        */
+                success: false,
 
-        const paymentData = {
-
-            phone: formattedPhone,
-
-            amount: paymentAmount,
-
-            reference: paymentReference,
-
-            description:
-                "NYOTA Payment"
-
-        };
-
-
-        /*
-        ----------------------------
-        CHANNEL
-        ----------------------------
-        */
-
-        if (PAYLOR_CHANNEL_ID) {
-
-            paymentData.channelId =
-                PAYLOR_CHANNEL_ID;
+                message:
+                    "PAYLOR_API_KEY is not configured."
+            });
         }
 
+        /* -----------------------------
+           CHANNEL
+        ----------------------------- */
 
-        /*
-        ----------------------------
-        IDEMPOTENCY KEY
-        ----------------------------
-        */
+        const channelId =
+            process.env.PAYLOR_CHANNEL_ID;
+
+        /* -----------------------------
+           REFERENCE
+        ----------------------------- */
+
+        if (!reference) {
+
+            reference =
+                `NYOTA-${Date.now()}`;
+        }
+
+        /* -----------------------------
+           IDEMPOTENCY KEY
+        ----------------------------- */
 
         const idempotencyKey =
-            crypto
-                .randomUUID();
+            crypto.randomUUID();
 
+        /* -----------------------------
+           REQUEST BODY
+        ----------------------------- */
+
+        const payload = {
+
+            phone,
+
+            amount,
+
+            reference,
+
+            description:
+                description ||
+                "NYOTA Payment"
+        };
 
         /*
-        ----------------------------
-        SEND STK PUSH TO PAYLOR
-        ----------------------------
+          Only include channelId if configured.
         */
 
+        if (channelId) {
+            payload.channelId =
+                channelId;
+        }
+
+        /*
+          Include callback if configured.
+        */
+
+        if (
+            process.env.PAYLOR_CALLBACK_URL
+        ) {
+
+            payload.callbackUrl =
+                process.env.PAYLOR_CALLBACK_URL;
+        }
+
         console.log(
-            "Sending STK Push:",
-            {
-                phone: formattedPhone,
-                amount: paymentAmount,
-                reference: paymentReference
-            }
+            "================================"
         );
 
+        console.log(
+            "NYOTA PAYLOR STK PUSH"
+        );
+
+        console.log(
+            "Phone:",
+            phone
+        );
+
+        console.log(
+            "Amount:",
+            amount
+        );
+
+        console.log(
+            "Reference:",
+            reference
+        );
+
+        console.log(
+            "================================"
+        );
+
+        /* -----------------------------
+           SEND TO PAYLOR
+        ----------------------------- */
 
         const response =
             await axios.post(
 
-                `${PAYLOR_API_URL}/merchants/payments/stk-push`,
+                `${PAYLOR_BASE_URL}/merchants/payments/stk-push`,
 
-                paymentData,
+                payload,
 
                 {
                     headers: {
 
                         Authorization:
-                            `Bearer ${PAYLOR_API_KEY}`,
+                            `Bearer ${apiKey}`,
 
                         "Content-Type":
                             "application/json",
@@ -404,20 +424,19 @@ app.post("/api/stk-push", async (req, res) => {
                 }
             );
 
-
-        /*
-        ----------------------------
-        PAYLOR RESPONSE
-        ----------------------------
-        */
+        console.log(
+            "PAYLOR RESPONSE:"
+        );
 
         console.log(
-            "Paylor response:",
             response.data
         );
 
+        /* -----------------------------
+           RETURN RESPONSE
+        ----------------------------- */
 
-        return res.status(200).json({
+        return res.status(201).json({
 
             success: true,
 
@@ -430,62 +449,51 @@ app.post("/api/stk-push", async (req, res) => {
             status:
                 response.data.status,
 
-            reference:
-                paymentReference
+            reference,
 
+            phone,
+
+            amount
         });
 
     } catch (error) {
 
         console.error(
-            "STK PUSH ERROR:"
+            "================================"
         );
 
-        if (error.response) {
-
-            console.error(
-                error.response.data
-            );
-
-            return res.status(
-                error.response.status || 500
-            ).json({
-
-                success: false,
-
-                message:
-                    "Paylor rejected the STK Push request.",
-
-                error:
-                    error.response.data
-            });
-        }
-
+        console.error(
+            "PAYLOR STK PUSH ERROR"
+        );
 
         console.error(
+            error.response?.data ||
             error.message
         );
 
+        console.error(
+            "================================"
+        );
 
-        return res.status(500).json({
+        return res.status(
+            error.response?.status || 500
+        ).json({
 
             success: false,
 
             message:
-                "Unable to connect to Paylor.",
+                "Failed to send STK Push.",
 
             error:
+                error.response?.data ||
                 error.message
         });
     }
 });
 
-
-/*
-================================
-PAYLOR WEBHOOK
-================================
-*/
+/* =========================================
+   PAYLOR CALLBACK / WEBHOOK
+========================================= */
 
 app.post(
     "/api/paylor-callback",
@@ -493,145 +501,62 @@ app.post(
 
         try {
 
-            const signature =
-                req.headers[
-                    "x-webhook-signature"
-                ];
-
-            if (
-                !PAYLOR_WEBHOOK_SECRET
-            ) {
-
-                return res.status(500).json({
-
-                    success: false,
-
-                    message:
-                        "Webhook secret is not configured."
-                });
-            }
-
-
-            const expectedSignature =
-                crypto
-                    .createHmac(
-                        "sha256",
-                        PAYLOR_WEBHOOK_SECRET
-                    )
-                    .update(req.rawBody)
-                    .digest("hex");
-
-
-            /*
-            ----------------------------
-            VERIFY SIGNATURE
-            ----------------------------
-            */
-
-            if (
-                !signature ||
-                signature !== expectedSignature
-            ) {
-
-                console.error(
-                    "Invalid Paylor webhook signature."
-                );
-
-                return res.status(401).json({
-
-                    success: false,
-
-                    message:
-                        "Invalid webhook signature."
-                });
-            }
-
-
-            const {
-                event,
-                transaction
-            } = req.body;
-
-
             console.log(
-                "PAYLOR WEBHOOK:",
-                req.body
+                "================================"
             );
 
+            console.log(
+                "PAYLOR CALLBACK RECEIVED"
+            );
+
+            console.log(
+                JSON.stringify(
+                    req.body,
+                    null,
+                    2
+                )
+            );
+
+            console.log(
+                "================================"
+            );
 
             /*
-            ----------------------------
-            PAYMENT SUCCESS
-            ----------------------------
-            */
+             * IMPORTANT:
+             *
+             * Payment should only be marked
+             * successful after validating
+             * Paylor's webhook signature.
+             */
 
-            if (
-                event ===
-                "payment.success"
-            ) {
+            const signature =
+                req.headers[
+                    "x-paylor-signature"
+                ];
 
-                console.log(
-                    "PAYMENT SUCCESSFUL"
-                );
-
-                console.log(
-                    "Reference:",
-                    transaction.reference
-                );
-
-                console.log(
-                    "Transaction:",
-                    transaction.id
-                );
-
-                console.log(
-                    "Amount:",
-                    transaction.amount
-                );
-
-                /*
-                Update your database here.
-
-                Example:
-
-                application.status =
-                    "paid";
-                */
-            }
-
+            console.log(
+                "Webhook signature:",
+                signature
+                    ? "Received"
+                    : "Not received"
+            );
 
             /*
-            ----------------------------
-            PAYMENT FAILED
-            ----------------------------
-            */
+             * We acknowledge the webhook.
+             */
 
-            if (
-                event ===
-                "payment.failed"
-            ) {
-
-                console.log(
-                    "PAYMENT FAILED"
-                );
-
-                console.log(
-                    transaction
-                );
-            }
-
-
-            return res.json({
+            return res.status(200).json({
 
                 success: true,
 
-                received: true
+                message:
+                    "Callback received."
             });
 
         } catch (error) {
 
             console.error(
-                "Webhook error:",
+                "CALLBACK ERROR:",
                 error
             );
 
@@ -640,25 +565,66 @@ app.post(
                 success: false,
 
                 message:
-                    "Webhook processing failed."
+                    "Callback processing failed."
             });
         }
     }
 );
 
+/* =========================================
+   HEALTH CHECK
+========================================= */
 
-/*
-================================
-SERVER
-================================
-*/
+app.get(
+    "/api/health",
+    (req, res) => {
+
+        res.json({
+
+            success: true,
+
+            server: "online",
+
+            paylor:
+                Boolean(
+                    process.env.PAYLOR_API_KEY
+                ),
+
+            time:
+                new Date().toISOString()
+        });
+    }
+);
+
+/* =========================================
+   SERVER
+========================================= */
 
 app.listen(
     PORT,
     () => {
 
         console.log(
-            `NYOTA backend running on port ${PORT}`
+            "================================"
+        );
+
+        console.log(
+            "NYOTA BACKEND"
+        );
+
+        console.log(
+            `Running on port ${PORT}`
+        );
+
+        console.log(
+            "Paylor:",
+            process.env.PAYLOR_API_KEY
+                ? "CONFIGURED"
+                : "NOT CONFIGURED"
+        );
+
+        console.log(
+            "================================"
         );
     }
 );
