@@ -10,6 +10,10 @@ const PORT = process.env.PORT || 10000;
 const PAYLOR_BASE_URL =
     "https://api.paylorke.com/api/v1";
 
+/* ================================
+   PAYLOR ENVIRONMENT VARIABLES
+================================ */
+
 const PAYLOR_API_KEY =
     process.env.PAYLOR_API_KEY;
 
